@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  apigw-dynamodb
+
+  Sample SAM Template for AWS API Gateway and DynamoDB Integration
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+
+Resources:
+  DefaultApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: "monkeys-apigw"
+
+  DefaultApiDeployment:
+    DependsOn: MonkeyPostMethod
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref DefaultApi
+      Description: API Deployment
+      StageName: !Ref StageName
+
+  MonkeyResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref DefaultApi
+      ParentId: !GetAtt DefaultApi.RootResourceId
+      PathPart: 'monkey'
+
+  MonkeyPostMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref DefaultApi
+      ResourceId: !Ref MonkeyResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS   # The type of backend that your method is running
+        Credentials: !GetAtt DefaultAPIRole.Arn
+        IntegrationHttpMethod: POST
+
+        # for AWS type, Uri format -> arn:aws:apigateway:region:subdomain.service|service:path|action/service_api
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:dynamodb:action/PutItem'
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json: "{\"TableName\":\"monkeys-and-trees\",\"Item\":{\"PK\":{\"S\":\"ALL_MONKEY\"},\"SK\":{\"S\":\"MONKEY#$context.requestId\"},\"name\":{\"S\":\"$input.path('$.monkey')\"},\"attitude\":{\"S\":\"$input.path('$.attitude')\"}}}"
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseTemplates:
+              application/json: "{\"statusCode\":\"200\", \"message\":\"monkey added\"}"
+      MethodResponses:
+        - StatusCode: '200'
+
+  DefaultAPIRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+      Policies:
+        - PolicyName: APIDynamoDBPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource: !Sub "${MonkeyTreeTable.Arn}*"
+
+  MonkeyTreeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "monkeys-and-trees"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: "PK"
+          AttributeType: "S"
+        - AttributeName: "SK"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "PK"
+          KeyType: "HASH"
+        - AttributeName: "SK"
+          KeyType: "RANGE"
+
+Outputs:
+  DefaultApi:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${DefaultApi}.execute-api.${AWS::Region}.amazonaws.com/dev/monkey"
+
